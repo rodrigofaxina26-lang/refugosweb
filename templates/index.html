@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Refugo 2026</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        :root {
+            --verde: #28a745;
+            --verde-escuro: #1e7e34;
+            --azul: #007bff;
+            --azul-escuro: #0056b3;
+            --roxo: #6c5ce7;
+            --vermelho: #d62728;
+            --laranja: #ff7f0e;
+            --cinza-bg: #f4f6f9;
+            --branco: #ffffff;
+            --sombra: 0 4px 12px rgba(0,0,0,0.08);
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: var(--cinza-bg);
+            color: #333;
+        }
+
+        /* ── HEADER ── */
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            padding: 28px 40px;
+            text-align: center;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .header img {
+            max-height: 70px;
+            max-width: 220px;
+            object-fit: contain;
+            display: block;
+            margin: 0 auto 16px auto;
+            filter: brightness(0) invert(1);
+        }
+        .header h1 {
+            color: #fff;
+            font-size: 1.9em;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .header p {
+            color: rgba(255,255,255,0.75);
+            font-size: 0.9em;
+            margin-top: 4px;
+        }
+
+        /* ── CONTAINER ── */
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px 24px; }
+
+        /* ── CARDS ── */
+        .card {
+            background: var(--branco);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: var(--sombra);
+        }
+        .card-title {
+            font-size: 1.05em;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: #444;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* ── GRID ── */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; }
+
+        /* ── FILTROS ── */
+        .filtro-bar {
+            background: var(--branco);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            box-shadow: var(--sombra);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+        }
+        .filtro-bar label {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #555;
+            margin-right: 4px;
+        }
+        .filtro-bar input[type="date"],
+        .filtro-bar input[type="text"] {
+            padding: 9px 12px;
+            border: 1px solid #d0d7de;
+            border-radius: 7px;
+            font-size: 0.9em;
+            background: #fafbfc;
+            color: #333;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .filtro-bar input:focus { border-color: var(--azul); background: #fff; }
+        #status {
+            font-size: 0.85em;
+            color: #888;
+            margin-left: auto;
+        }
+
+        /* ── BOTÕES ── */
+        button {
+            padding: 9px 20px;
+            border: none;
+            border-radius: 7px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9em;
+            transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+        button:active { transform: translateY(0); }
+        .btn-azul   { background: var(--azul);   color: #fff; }
+        .btn-azul:hover { background: var(--azul-escuro); }
+        .btn-verde  { background: var(--verde);  color: #fff; }
+        .btn-verde:hover { background: var(--verde-escuro); }
+        .btn-roxo   { background: var(--roxo);   color: #fff; }
+        .btn-roxo:hover  { background: #5a4bd1; }
+        .btn-laranja { background: var(--laranja); color: #fff; }
+        .btn-laranja:hover { background: #e06a00; }
+
+        /* ── SEÇÃO PRODUTO ── */
+        .produto-card {
+            background: linear-gradient(135deg, #f8f7ff 0%, #ede9ff 100%);
+            border: 1.5px solid #c9c0f7;
+            border-radius: var(--radius);
+            padding: 22px 24px;
+            margin-bottom: 24px;
+            box-shadow: var(--sombra);
+        }
+        .produto-card .card-title { color: var(--roxo); }
+        .produto-input-row { display: flex; gap: 10px; align-items: center; }
+        .produto-input-row input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1.5px solid #c9c0f7;
+            border-radius: 7px;
+            font-size: 0.95em;
+            outline: none;
+        }
+        .produto-input-row input:focus { border-color: var(--roxo); }
+
+        /* ── TOP 3 / PARETO INLINE ── */
+        .secao-amarela {
+            background: #fffbea;
+            border: 1.5px solid #ffe082;
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            margin-bottom: 20px;
+            box-shadow: var(--sombra);
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        .secao-amarela strong { font-size: 1em; color: #7a6000; }
+        .secao-amarela input[type="date"] {
+            padding: 8px 12px;
+            border: 1px solid #d0b800;
+            border-radius: 7px;
+            font-size: 0.9em;
+            background: #fff;
+        }
+        #statusTop3, #statusPareto {
+            font-size: 0.85em;
+            color: #888;
+            margin-left: 4px;
+        }
+
+        /* ── CARDS TOP 3 ── */
+        .top3-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+        .top3-col {
+            background: #f0faf2;
+            border: 1.5px solid #b2dfdb;
+            border-radius: 10px;
+            padding: 16px;
+        }
+        .top3-col h4 { color: var(--verde-escuro); margin-bottom: 12px; font-size: 0.95em; }
+        .top3-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: var(--branco);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+        }
+        .rank { font-size: 1.3em; font-weight: 800; color: var(--azul); min-width: 28px; text-align: center; }
+        .top3-info strong { font-size: 0.95em; }
+        .modo-falha { color: #c0392b; font-weight: 600; font-size: 0.85em; }
+        .top3-info small { color: #777; font-size: 0.82em; }
+
+        /* ── RESULTADO PRODUTO ── */
+        .prod-col {
+            background: #f0faf2;
+            border: 1.5px solid #b2dfdb;
+            border-radius: 10px;
+            padding: 16px;
+        }
+        .prod-col h4 { color: var(--verde-escuro); margin-bottom: 10px; font-size: 0.95em; }
+        .prod-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 9px 12px;
+            background: white;
+            border-radius: 7px;
+            margin-bottom: 6px;
+            font-size: 0.9em;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+
+        /* ── SEPARADOR ── */
+        .section-label {
+            font-size: 0.78em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #aaa;
+            margin: 28px 0 10px 0;
+        }
+
+        @media (max-width: 768px) {
+            .grid-2, .grid-4, .top3-grid { grid-template-columns: 1fr; }
+            .filtro-bar { flex-direction: column; align-items: flex-start; }
+            .produto-input-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<div class="header">
+    <img src="{{ url_for('static', filename='imagens/logo.png') }}" alt="Logo">
+    <h1>📊 Dashboard de Gestão de Refugo</h1>
+    <p>SCI · SPR · 2026</p>
+</div>
+
+<div class="container">
+
+    <!-- ── BUSCA POR PRODUTO ── -->
+    <div class="produto-card">
+        <div class="card-title">🔍 Top 3 Defeitos por Produto</div>
+        <div class="produto-input-row">
+            <input type="text" id="inpP" placeholder="Nome ou código do produto...">
+            <button class="btn-roxo" onclick="verProd()">Analisar</button>
+        </div>
+        <div id="resP" class="grid-2" style="margin-top:16px; display:none;"></div>
+    </div>
+
+    <!-- ── TOP 3 DO DIA ── -->
+    <div class="secao-amarela">
+        <strong>🏆 TOP 3 DO DIA</strong>
+        <input type="date" id="dataTop3" value="2026-04-23">
+        <button class="btn-laranja" onclick="mostrarTop3()">Ver TOP 3</button>
+        <span id="statusTop3"></span>
+    </div>
+    <div id="top3Result" style="display:none;">
+        <div class="card">
+            <div class="card-title" id="top3Title"></div>
+            <div class="top3-grid">
+                <div class="top3-col">
+                    <h4>📦 Maiores Quantidades</h4>
+                    <div id="topQtde"></div>
+                </div>
+                <div class="top3-col">
+                    <h4>💰 Maiores Custos</h4>
+                    <div id="topCusto"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── PARETO ── -->
+    <div class="secao-amarela">
+        <strong>📈 PARETO — Modos de Falha</strong>
+        <button class="btn-laranja" onclick="mostrarPareto()">Gerar Pareto SCI/SPR</button>
+        <span id="statusPareto"></span>
+    </div>
+    <div id="paretoResult" style="display:none;">
+        <div class="grid-2">
+            <div class="card"><div id="paretoSCI"></div></div>
+            <div class="card"><div id="paretoSPR"></div></div>
+        </div>
+    </div>
+
+    <!-- ── FILTROS EVOLUÇÃO ── -->
+    <div class="section-label">Evolução no período</div>
+    <div class="filtro-bar">
+        <label>De</label>
+        <input type="date" id="dataInicio" value="2026-01-01">
+        <label>Até</label>
+        <input type="date" id="dataFim" value="2026-04-23">
+        <label>Produto</label>
+        <input type="text" id="produto" placeholder="Ex: Filtro ar, polia..." style="min-width:200px;">
+        <button class="btn-azul" onclick="atualizarDashboard()">🔄 Atualizar</button>
+        <span id="status">Carregando...</span>
+    </div>
+
+    <!-- ── GRÁFICOS EVOLUÇÃO ── -->
+    <div class="grid-2">
+        <div class="card"><div id="plotQ"></div></div>
+        <div class="card"><div id="plotC"></div></div>
+    </div>
+
+    <!-- ── TOP 10 PRODUTOS ── -->
+    <div class="section-label">Top 10 por produto</div>
+    <div class="grid-4">
+        <div class="card"><div class="card-title">SCI — Quantidade</div><div id="sq"></div></div>
+        <div class="card"><div class="card-title">SPR — Quantidade</div><div id="pq"></div></div>
+        <div class="card"><div class="card-title">SCI — Custo R$</div><div id="sc"></div></div>
+        <div class="card"><div class="card-title">SPR — Custo R$</div><div id="pc"></div></div>
+    </div>
+
+</div><!-- /container -->
+
+<script>
+    let dados = {}, dadosPareto = {};
+
+    async function mostrarTop3() {
+        const data = document.getElementById('dataTop3').value;
+        document.getElementById('statusTop3').innerHTML = '⏳ Carregando...';
+        document.getElementById('top3Result').style.display = 'none';
+        try {
+            const res = await fetch(`/detalhe?data=${data}`);
+            const top3 = await res.json();
+            document.getElementById('top3Title').innerHTML =
+                `🏆 TOP 3 — ${top3.data} &nbsp;<small style="color:#888;font-weight:400;">(${top3.total_registros} registros)</small>`;
+            const render = (lista) => lista.map((item, i) => `
+                <div class="top3-item">
+                    <div class="rank">${i+1}</div>
+                    <div class="top3-info">
+                        <strong>${item.produto}</strong><br>
+                        <span class="modo-falha">⚠ ${item.modo_falha}</span><br>
+                        <small>${item.qtde.toLocaleString()} peças &nbsp;|&nbsp; R$ ${item.custo.toLocaleString('pt-BR',{minimumFractionDigits:2})}</small>
+                    </div>
+                </div>`).join('') || '<p style="color:#aaa;font-size:.9em;">Sem registros</p>';
+            document.getElementById('topQtde').innerHTML = render(top3.top3.top_qtde);
+            document.getElementById('topCusto').innerHTML = render(top3.top3.top_custo);
+            document.getElementById('top3Result').style.display = 'block';
+            document.getElementById('statusTop3').innerHTML = '✅ Carregado';
+        } catch(e) {
+            document.getElementById('statusTop3').innerHTML = '❌ Erro: ' + e.message;
+        }
+    }
+
+    async function mostrarPareto() {
+        const params = new URLSearchParams();
+        const i = document.getElementById('dataInicio').value;
+        const f = document.getElementById('dataFim').value;
+        const p = document.getElementById('produto').value.trim();
+        if (i) params.append('inicio', i);
+        if (f) params.append('fim', f);
+        if (p) params.append('produto', p);
+        document.getElementById('statusPareto').innerHTML = '⏳ Gerando...';
+        document.getElementById('paretoResult').style.display = 'none';
+        try {
+            const res = await fetch(`/pareto?${params}`);
+            dadosPareto = await res.json();
+            renderizarPareto();
+            document.getElementById('statusPareto').innerHTML = `✅ ${dadosPareto.filtros}`;
+        } catch(e) {
+            document.getElementById('statusPareto').innerHTML = '❌ Erro: ' + e.message;
+        }
+    }
+
+    function renderizarPareto() {
+        const sci = dadosPareto.sci;
+        Plotly.newPlot('paretoSCI', [
+            {x: sci.modo, y: sci.qtde, type: 'bar', name: 'Qtde', marker: {color: '#d62728'}},
+            {x: sci.modo, y: sci.cumperc, yaxis: 'y2', type: 'scatter', mode: 'lines+markers', name: '% Acum.', line: {color: '#ff7f0e'}}
+        ], {
+            title: `SCI (${sci.total.toLocaleString()} peças)`,
+            yaxis: {title: 'Quantidade'},
+            yaxis2: {title: '% Acumulado', overlaying: 'y', side: 'right', tickformat: '.0%'},
+            height: 380, margin: {t: 50, b: 100}
+        });
+        const spr = dadosPareto.spr;
+        Plotly.newPlot('paretoSPR', [
+            {x: spr.modo, y: spr.qtde, type: 'bar', name: 'Qtde', marker: {color: '#1f77b4'}},
+            {x: spr.modo, y: spr.cumperc, yaxis: 'y2', type: 'scatter', mode: 'lines+markers', name: '% Acum.', line: {color: '#ff7f0e'}}
+        ], {
+            title: `SPR (${spr.total.toLocaleString()} peças)`,
+            yaxis: {title: 'Quantidade'},
+            yaxis2: {title: '% Acumulado', overlaying: 'y', side: 'right', tickformat: '.0%'},
+            height: 380, margin: {t: 50, b: 100}
+        });
+        document.getElementById('paretoResult').style.display = 'block';
+    }
+
+    async function carregarDados(inicio = null, fim = null, extraParams = null) {
+        const params = extraParams || new URLSearchParams();
+        if (inicio) params.append('inicio', inicio);
+        if (fim)    params.append('fim', fim);
+        const res = await fetch(`/filtrar?${params}`);
+        dados = await res.json();
+        document.getElementById('status').innerHTML =
+            `Período: ${dados.periodo} &nbsp;|&nbsp; ${dados.run.length} dias com registros`;
+        renderizarDashboard();
+    }
+
+    function renderizarDashboard() {
+        if (!dados.run || dados.run.length === 0) {
+            ['plotQ','plotC'].forEach(id =>
+                document.getElementById(id).innerHTML =
+                    '<p style="text-align:center;color:#aaa;padding:40px 0;">Nenhum dado encontrado para o período.</p>');
+            return;
+        }
+        const layout = (title) => ({title, font: {family: 'Segoe UI'}, margin: {t: 50, b: 40}});
+        Plotly.newPlot('plotQ',
+            [{x: dados.run.map(r => r.DATA_STR), y: dados.run.map(r => r.TOTAL_Q),
+              type: 'scatter', mode: 'lines+markers', fill: 'tozeroy',
+              line: {shape: 'spline', color: '#1f77b4'}, fillcolor: 'rgba(31,119,180,0.1)'}],
+            layout('Evolução — Quantidade de Refugos'));
+        Plotly.newPlot('plotC',
+            [{x: dados.run.map(r => r.DATA_STR), y: dados.run.map(r => r.TOTAL_C),
+              type: 'scatter', mode: 'lines+markers', fill: 'tozeroy',
+              line: {shape: 'spline', color: '#2ca02c'}, fillcolor: 'rgba(44,160,44,0.1)'}],
+            layout('Evolução — Custo Total (R$)'));
+
+        function bar(id, data, x, y, title, color) {
+            if (!data || !data.length) {
+                document.getElementById(id).innerHTML =
+                    '<p style="text-align:center;color:#aaa;padding:20px 0;">Sem dados</p>';
+                return;
+            }
+            Plotly.newPlot(id,
+                [{x: data.map(r => r[x]), y: data.map(r => r[y]),
+                  type: 'bar', marker: {color}}],
+                {title, font: {family: 'Segoe UI'}, margin: {t: 40, b: 120},
+                 xaxis: {tickangle: -35}});
+        }
+        bar('sq', dados.sci_q, 'PRODUTO', 'QTDE',        'SCI — Quantidade', '#d62728');
+        bar('pq', dados.spr_q, 'PRODUTO', 'QTDE',        'SPR — Quantidade', '#1f77b4');
+        bar('sc', dados.sci_c, 'PRODUTO', 'VALOR_CUSTO', 'SCI — Custo R$',   '#e67e22');
+        bar('pc', dados.spr_c, 'PRODUTO', 'VALOR_CUSTO', 'SPR — Custo R$',   '#8e44ad');
+    }
+
+    function atualizarDashboard() {
+        const inicio  = document.getElementById('dataInicio').value;
+        const fim     = document.getElementById('dataFim').value;
+        const produto = document.getElementById('produto').value.trim();
+        const params  = new URLSearchParams();
+        if (inicio)  params.append('inicio', inicio);
+        if (fim)     params.append('fim', fim);
+        if (produto) params.append('produto', produto);
+        carregarDados(inicio, fim, params);
+    }
+
+    async function verProd() {
+        const p   = document.getElementById('inpP').value;
+        const i   = document.getElementById('dataInicio').value;
+        const f   = document.getElementById('dataFim').value;
+        const div = document.getElementById('resP');
+        if (!p) return alert('Digite um produto');
+        div.style.display = 'grid';
+        div.innerHTML = '<p style="color:#aaa;">Buscando...</p>';
+        const res  = await fetch(`/produto_pareto?produto=${encodeURIComponent(p)}&inicio=${i}&fim=${f}`);
+        const data = await res.json();
+        const col  = (titulo, lista) => {
+            const itens = lista.map(d =>
+                `<div class="prod-item"><span>${d.MODO_FALHA}</span><strong>${d.QTDE} pçs</strong></div>`
+            ).join('') || '<p style="color:#aaa;font-size:.85em;">Sem dados</p>';
+            return `<div class="prod-col"><h4>${titulo}</h4>${itens}</div>`;
+        };
+        div.innerHTML = col('SCI', data.sci) + col('SPR', data.spr);
+    }
+
+    carregarDados();
+</script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+from flask import Flask, request
+import pandas as pd
+import json
+import shutil
+import os
+from datetime import datetime, date
+
+app = Flask(__name__)
+
+# --- CONFIGURAÇÕES ---
+ARQUIVO_REDE = r"P:\\QUALIDADE\\USUARIOS\\00. Dept. Qualidade\\07. Controle de Refugo\\2026\\Cópia de REFUGO 2026 V5 versao teste programa.xlsb"
+ARQUIVO_LOCAL = "temp_processamento_refugo.xlsb"
+
+# --- FUNÇÃO: Excel serial number → datetime ---
+def excel_to_datetime(excel_date):
+    origin = pd.to_datetime("1899-12-30")
+    return origin + pd.to_timedelta(excel_date, unit="D")
+
+# --- CACHE GLOBAL ---
+_cache = {
+    "df_sci": pd.DataFrame(),
+    "df_spr": pd.DataFrame(),
+    "last_modified": 0.0,
+}
+
+def file_has_changed(path):
+    try:
+        stat = os.stat(path)
+        return stat.st_mtime > _cache["last_modified"]
+    except Exception:
+        return True
+
+def carregar_dados():
+    if not file_has_changed(ARQUIVO_REDE):
+        print("🔁 Reutilizando dados do cache.")
+        return _cache["df_sci"].copy(), _cache["df_spr"].copy()
+
+    try:
+        if not os.path.exists(ARQUIVO_REDE):
+            print(f"❌ ARQUIVO_REDE não existe: {ARQUIVO_REDE}")
+            return pd.DataFrame(), pd.DataFrame()
+
+        print("✅ Arquivo de rede existe.")
+        shutil.copy2(ARQUIVO_REDE, ARQUIVO_LOCAL)
+        print("📦 Copiado para:", ARQUIVO_LOCAL)
+
+        with pd.ExcelFile(ARQUIVO_LOCAL, engine="pyxlsb") as xls:
+            abas = xls.sheet_names
+            print("🟨 Abas encontradas:", abas)
+
+            for a in abas:
+                print("🟥 Aba (repr):", repr(a))
+
+            df_sci = pd.read_excel(xls, "SCI - QTD") if "SCI - QTD" in abas else pd.DataFrame()
+            df_spr = pd.read_excel(xls, "SPR - QTD") if "SPR - QTD" in abas else pd.DataFrame()
+
+            print("📏 Shape SCI - QTD:", df_sci.shape)
+            print("📏 Shape SPR - QTD:", df_spr.shape)
+
+            if not df_sci.empty:
+                print("🟥 Colunas SCI:", df_sci.columns.tolist())
+                print("🟥 Head SCI:\n", df_sci.head())
+            if not df_spr.empty:
+                print("🟥 Colunas SPR:", df_spr.columns.tolist())
+                print("🟥 Head SPR:\n", df_spr.head())
+
+        _cache["last_modified"] = os.stat(ARQUIVO_REDE).st_mtime
+        print("⏰ Timestamp atualizado:", _cache["last_modified"])
+
+        if os.path.exists(ARQUIVO_LOCAL):
+            os.remove(ARQUIVO_LOCAL)
+            print("🗑️ Arquivo temporário removido.")
+
+        dfs_processados = []
+        for df in [df_sci, df_spr]:
+            if df.empty:
+                dfs_processados.append(df)
+                continue
+
+            df.columns = [str(c).strip().upper() for c in df.columns]
+            print("🟥 Colunas padronizadas:", df.columns.tolist())
+
+            if "DATA" not in df.columns:
+                print("⚠️ Coluna 'DATA' não encontrada.")
+                dfs_processados.append(pd.DataFrame())
+                continue
+
+            df["DATA"] = pd.to_numeric(df["DATA"], errors="coerce")
+            df = df.dropna(subset=["DATA"])
+
+            df["DATA"] = excel_to_datetime(df["DATA"])
+            df = df.dropna(subset=["DATA"])
+            df = df[df["DATA"].dt.year >= 2025].copy()
+            print("🗂️ Após filtragem DATA >= 2025:", df.shape)
+
+            if "QTDE" in df.columns:
+                df["QTDE"] = pd.to_numeric(df["QTDE"], errors="coerce").fillna(0)
+            else:
+                df["QTDE"] = 0
+
+            col_custo = [c for c in df.columns if "CUSTO" in c or "VALOR" in c]
+            nome_col_origem = col_custo[0] if col_custo else None
+
+            if nome_col_origem and nome_col_origem in df.columns:
+                custo_ser = pd.to_numeric(df[nome_col_origem], errors="coerce").fillna(0)
+                df["VALOR_CUSTO"] = (custo_ser * df["QTDE"]).fillna(0)
+            else:
+                df["VALOR_CUSTO"] = 0
+
+            df["DATA_STR"] = df["DATA"].dt.strftime("%Y-%m-%d")
+            dfs_processados.append(df)
+
+        _cache["df_sci"] = dfs_processados[0].copy()
+        _cache["df_spr"] = dfs_processados[1].copy()
+        print("💾 Dados salvos no cache.")
+
+        return _cache["df_sci"].copy(), _cache["df_spr"].copy()
+
+    except Exception as e:
+        print(f"💥 Erro: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+
+# --- NOVA FUNÇÃO: FILTRAR POR DATAS ---
+def filtrar_por_data(df, data_inicio, data_fim):
+    if df.empty or "DATA" not in df.columns:
+        return df.copy()
+    
+    df_filtrado = df[(df["DATA"] >= pd.to_datetime(data_inicio)) & 
+                     (df["DATA"] <= pd.to_datetime(data_fim))].copy()
+    return df_filtrado
+
+@app.route("/filtrar")
+def filtrar():
+    data_inicio = request.args.get("inicio", (date.today() - pd.Timedelta(days=90)).strftime("%Y-%m-%d"))
+    data_fim = request.args.get("fim", date.today().strftime("%Y-%m-%d"))
+    
+    df_sci_raw, df_spr_raw = carregar_dados()
+    df_sci = filtrar_por_data(df_sci_raw, data_inicio, data_fim)
+    df_spr = filtrar_por_data(df_spr_raw, data_inicio, data_fim)
+    
+    print(f"🔍 Filtro: {data_inicio} até {data_fim}")
+    print(f"📊 SCI: {df_sci.shape}, SPR: {df_spr.shape}")
+    
+    res_sci = df_sci.groupby("DATA_STR")[["QTDE", "VALOR_CUSTO"]].sum().reset_index()
+    res_spr = df_spr.groupby("DATA_STR")[["QTDE", "VALOR_CUSTO"]].sum().reset_index()
+    
+    run_df = pd.merge(res_sci, res_spr, on="DATA_STR", how="outer", suffixes=("_SCI", "_SPR")).fillna(0)
+    run_df["TOTAL_Q"] = run_df["QTDE_SCI"] + run_df["QTDE_SPR"]
+    run_df["TOTAL_C"] = run_df["VALOR_CUSTO_SCI"] + run_df["VALOR_CUSTO_SPR"]
+    run_df = run_df.sort_values("DATA_STR")
+    
+    def top10(df, col):
+        col_prod = "PRODUTO"
+        if col_prod not in df.columns or df.empty:
+            return []
+        return df.groupby(col_prod)[col].sum().nlargest(10).reset_index().to_dict("records")
+    
+    dados_json = {
+        "run": run_df.to_dict("records"),
+        "sci_q": top10(df_sci, "QTDE"),
+        "sci_c": top10(df_sci, "VALOR_CUSTO"),
+        "spr_q": top10(df_spr, "QTDE"),
+        "spr_c": top10(df_spr, "VALOR_CUSTO"),
+        "periodo": f"{data_inicio} a {data_fim}",
+        "total_dias": len(run_df)
+    }
+    
+    return json.dumps(dados_json)
+
+@app.route("/")
+def index():
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Refugo 2026</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 30px; background: #f0f2f5; }
+        .card { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .filtros { background: #e8f4fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .filtros input { padding: 8px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #status { color: #666; font-size: 14px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>📊 Gestão de Refugo 2026</h1>
+    
+    <div class="filtros">
+        <strong>🗓️ Filtro por Período:</strong><br>
+        De: <input type="date" id="dataInicio" value="2025-01-01">
+        Até: <input type="date" id="dataFim" value="2026-03-19">
+        <button onclick="atualizarDashboard()">🔄 Filtrar</button>
+        <button onclick="limparFiltro()">🧹 Todos os Dados</button>
+        <div id="status">Carregando...</div>
+    </div>
+
+    <div class="card">
+        <div id="plotQ"></div>
+    </div>
+    <div class="card">
+        <div id="plotC"></div>
+    </div>
+
+    <div class="grid">
+        <div class="card"><div id="sq"></div></div>
+        <div class="card"><div id="pq"></div></div>
+        <div class="card"><div id="sc"></div></div>
+        <div class="card"><div id="pc"></div></div>
+    </div>
+
+    <script>
+        let dados = {};
+        
+        async function carregarDados(inicio = null, fim = null) {
+            const params = new URLSearchParams();
+            if (inicio) params.append('inicio', inicio);
+            if (fim) params.append('fim', fim);
+            
+            const response = await fetch(`/filtrar?${params}`);
+            dados = await response.json();
+            
+            document.getElementById('status').innerHTML = 
+                `Período: ${dados.periodo} (${dados.total_dias} dias)`;
+            
+            renderizar();
+        }
+        
+        function renderizar() {
+            Plotly.newPlot('plotQ', [{
+                x: dados.run.map(i => i.DATA_STR),
+                y: dados.run.map(i => i.TOTAL_Q),
+                type: 'scatter', mode: 'lines+markers', name: 'Total Peças',
+                line: { shape: 'spline', color: '#1f77b4' }
+            }], { title: 'Evolução Diária (Qtd)' });
+
+            Plotly.newPlot('plotC', [{
+                x: dados.run.map(i => i.DATA_STR),
+                y: dados.run.map(i => i.TOTAL_C),
+                type: 'scatter', mode: 'lines+markers', name: 'Custo R$',
+                line: { shape: 'spline', color: '#2ca02c' }
+            }], { title: 'Evolução Diária (Custo R$)' });
+
+            function bar(id, data, x, y, title, color) {
+                Plotly.newPlot(id, [{
+                    x: data.map(i => i[x]), y: data.map(i => i[y]),
+                    type: 'bar', marker: { color: color }
+                }], { title, margin: { t: 50, b: 100 } });
+            }
+            
+            bar('sq', dados.sci_q, 'PRODUTO', 'QTDE', 'Top 10 SCI (Qtd)', '#d62728');
+            bar('pq', dados.spr_q, 'PRODUTO', 'QTDE', 'Top 10 SPR (Qtd)', '#1f77b4');
+            bar('sc', dados.sci_c, 'PRODUTO', 'VALOR_CUSTO', 'Top 10 SCI (Custo)', '#d62728');
+            bar('pc', dados.spr_c, 'PRODUTO', 'VALOR_CUSTO', 'Top 10 SPR (Custo)', '#1f77b4');
+        }
+        
+        function atualizarDashboard() {
+            const inicio = document.getElementById('dataInicio').value;
+            const fim = document.getElementById('dataFim').value;
+            carregarDados(inicio, fim);
+        }
+        
+        function limparFiltro() {
+            carregarDados();
+        }
+        
+        carregarDados();
+    </script>
+</body>
+</html>
+    """
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5003)

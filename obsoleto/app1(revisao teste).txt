@@ -1,0 +1,288 @@
+from flask import Flask
+import pandas as pd
+import json
+import shutil
+import os
+
+app = Flask(__name__)
+
+# --- CONFIGURAÇÕES ---
+ARQUIVO_REDE = r"P:\QUALIDADE\USUARIOS\00. Dept. Qualidade\07. Controle de Refugo\2026\Cópia de REFUGO 2026 V5 versao teste programa.xlsb"
+ARQUIVO_LOCAL = "temp_processamento_refugo.xlsb"
+
+
+# --- FUNÇÃO: Excel serial number → datetime ---
+def excel_to_datetime(excel_date):
+    # Excel usa 1899-12-30 como zero
+    origin = pd.to_datetime("1899-12-30")
+    return origin + pd.to_timedelta(excel_date, unit="D")
+
+
+# --- CACHE GLOBAL --- #
+_cache = {
+    "df_sci": pd.DataFrame(),
+    "df_spr": pd.DataFrame(),
+    "last_modified": 0.0,  # timestamp do arquivo
+}
+
+
+def file_has_changed(path):
+    try:
+        stat = os.stat(path)
+        return stat.st_mtime > _cache["last_modified"]
+    except Exception:
+        return True  # se não conseguiu ler, força recarregar
+
+
+def carregar_dados():
+    # Reutiliza cache se o arquivo não mudou
+    if not file_has_changed(ARQUIVO_REDE):
+        print("🔁 Reutilizando dados do cache.")
+        return _cache["df_sci"].copy(), _cache["df_spr"].copy()
+
+    try:
+        # 1. Verifica se o arquivo da rede existe
+        if not os.path.exists(ARQUIVO_REDE):
+            print(f"❌ ARQUIVO_REDE não existe ou não é acessível: {ARQUIVO_REDE}")
+            return pd.DataFrame(), pd.DataFrame()
+
+        print("✅ Arquivo de rede existe e é acessível.")
+
+        # 2. Copia o arquivo da rede para o local
+        shutil.copy2(ARQUIVO_REDE, ARQUIVO_LOCAL)
+        print("📦 Copiado para:", ARQUIVO_LOCAL)
+
+        # 3. Lê a cópia local usando pyxlsb
+        with pd.ExcelFile(ARQUIVO_LOCAL, engine="pyxlsb") as xls:
+            abas = xls.sheet_names
+            print("🟨 Abas encontradas:", abas)
+
+            # Verifica o nome exato das abas (com repr para ver espaços)
+            for a in abas:
+                print("🟥 Aba (repr):", repr(a))
+
+            df_sci = pd.read_excel(xls, "SCI - QTD") if "SCI - QTD" in abas else pd.DataFrame()
+            df_spr = pd.read_excel(xls, "SPR - QTD") if "SPR - QTD" in abas else pd.DataFrame()
+
+            print("📏 Shape SCI - QTD:", df_sci.shape)
+            print("📏 Shape SPR - QTD:", df_spr.shape)
+
+            # Se quiser, veja um pedaço dos dados:
+            if not df_sci.empty:
+                print("🟥 Colunas SCI:", df_sci.columns.tolist())
+                print("🟥 Head SCI:\n", df_sci.head())
+            if not df_spr.empty:
+                print("🟥 Colunas SPR:", df_spr.columns.tolist())
+                print("🟥 Head SPR:\n", df_spr.head())
+
+        # 4. Atualiza timestamp de cache
+        _cache["last_modified"] = os.stat(ARQUIVO_REDE).st_mtime
+        print("⏰ Timestamp de cache atualizado:", _cache["last_modified"])
+
+        # 5. Limpeza imediata do arquivo temporário
+        if os.path.exists(ARQUIVO_LOCAL):
+            os.remove(ARQUIVO_LOCAL)
+            print("🗑️ Arquivo temporário removido.")
+
+        # 6. Processa cada DataFrame (seus filtros)
+        dfs_processados = []
+        for df in [df_sci, df_spr]:
+            if df.empty:
+                dfs_processados.append(df)
+                continue
+
+            # Padroniza colunas
+            df.columns = [str(c).strip().upper() for c in df.columns]
+            print("🟥 Colunas padronizadas para o frame atual:", df.columns.tolist())
+
+            # --- Tratamento de DATA em formato Excel ---
+            if "DATA" not in df.columns:
+                print("⚠️ Coluna 'DATA' não encontrada neste frame.")
+                dfs_processados.append(pd.DataFrame())
+                continue
+
+            # Converte para numérico, só valores que puderem
+            df["DATA"] = pd.to_numeric(df["DATA"], errors="coerce")
+            df = df.dropna(subset=["DATA"])
+
+            # Converte número Excel para datetime
+            df["DATA"] = excel_to_datetime(df["DATA"])
+            df = df.dropna(subset=["DATA"])
+            df = df[df["DATA"].dt.year >= 2025].copy()
+            print("🗂️ Após filtragem por DATA >= 2025:", df.shape)
+
+            # --- Converte QTDE ---
+            if "QTDE" in df.columns:
+                df["QTDE"] = pd.to_numeric(df["QTDE"], errors="coerce").fillna(0)
+            else:
+                df["QTDE"] = 0
+
+            # --- Encontra coluna de custo (flexível) ---
+            col_custo = [c for c in df.columns if "CUSTO" in c or "VALOR" in c]
+            nome_col_origem = col_custo[0] if col_custo else None
+
+            if nome_col_origem and nome_col_origem in df.columns:
+                # Se for custo unitário, vamos multiplicar por QTDE para gerar VALOR_CUSTO
+                custo_ser = pd.to_numeric(df[nome_col_origem], errors="coerce").fillna(0)
+                df["VALOR_CUSTO"] = (custo_ser * df["QTDE"]).fillna(0)
+            else:
+                df["VALOR_CUSTO"] = 0
+
+            # --- Cria DATA_STR para agrupamento ---
+            df["DATA_STR"] = df["DATA"].dt.strftime("%Y-%m-%d")
+
+            dfs_processados.append(df)
+
+        # Salva no cache
+        _cache["df_sci"] = dfs_processados[0].copy()
+        _cache["df_spr"] = dfs_processados[1].copy()
+        print("💾 Dados salvos no cache.")
+
+        return _cache["df_sci"].copy(), _cache["df_spr"].copy()
+
+    except Exception as e:
+        print(f"💥 Erro Crítico no Processamento: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+
+
+@app.route("/")
+def index():
+    df_sci, df_spr = carregar_dados()
+
+    print("📊 Shape final df_sci:", df_sci.shape)
+    print("📊 Shape final df_spr:", df_spr.shape)
+
+    if df_sci.empty and df_spr.empty:
+        return "<h1 style='color:red;'>Erro: Planilhas vazias ou arquivo de rede inacessível.</h1>"
+
+    # --- Agrupamento diário ---
+    res_sci = df_sci.groupby("DATA_STR")[["QTDE", "VALOR_CUSTO"]].sum().reset_index()
+    res_spr = df_spr.groupby("DATA_STR")[["QTDE", "VALOR_CUSTO"]].sum().reset_index()
+
+    # Merge com preenchimento
+    run_df = pd.merge(res_sci, res_spr, on="DATA_STR", how="outer", suffixes=("_SCI", "_SPR")).fillna(0)
+
+    # Totais diários
+    run_df["TOTAL_Q"] = run_df["QTDE_SCI"] + run_df["QTDE_SPR"]
+    run_df["TOTAL_C"] = run_df["VALOR_CUSTO_SCI"] + run_df["VALOR_CUSTO_SPR"]
+    run_df = run_df.sort_values("DATA_STR")
+
+    # --- Função para Top 10 por produto (Qtd e Custo) ---
+    def top10(df, col):
+        col_prod = "PRODUTO"
+        if col_prod not in df.columns or df.empty:
+            return []
+        return df.groupby(col_prod)[col].sum().nlargest(10).reset_index().to_dict("records")
+
+    # Dados para JSON
+    dados_json = {
+        "run": run_df.to_dict("records"),
+        "sci_q": top10(df_sci, "QTDE"),
+        "sci_c": top10(df_sci, "VALOR_CUSTO"),
+        "spr_q": top10(df_spr, "QTDE"),
+        "spr_c": top10(df_spr, "VALOR_CUSTO"),
+    }
+
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard Refugo 2026</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 30px;
+            background: #f0f2f5;
+        }}
+        .card {{
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <h1>📊 Gestão de Refugo 2026</h1>
+
+    <div class="card">
+        <div id="plotQ"></div>
+    </div>
+    <div class="card">
+        <div id="plotC"></div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div id="sq"></div>
+        </div>
+        <div class="card">
+            <div id="pq"></div>
+        </div>
+        <div class="card">
+            <div id="sc"></div>
+        </div>
+        <div class="card">
+            <div id="pc"></div>
+        </div>
+    </div>
+
+    <script>
+        const d = {json.dumps(dados_json)};
+
+        Plotly.newPlot('plotQ', [{{
+            x: d.run.map(i => i.DATA_STR),
+            y: d.run.map(i => i.TOTAL_Q),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Total Peças',
+            line: {{ shape: 'spline', color: '#1f77b4' }}
+        }}], {{
+            title: 'Evolução Diária (Qtd)'
+        }});
+
+        Plotly.newPlot('plotC', [{{
+            x: d.run.map(i => i.DATA_STR),
+            y: d.run.map(i => i.TOTAL_C),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Custo R$',
+            line: {{ shape: 'spline', color: '#2ca02c' }}
+        }}], {{
+            title: 'Evolução Diária (Custo R$)'
+        }});
+
+        function bar(id, data, x, y, title, color) {{
+            Plotly.newPlot(id, [{{
+                x: data.map(i => i[x]),
+                y: data.map(i => i[y]),
+                type: 'bar',
+                marker: {{ color: color }}
+            }}], {{
+                title: title,
+                margin: {{ t: 50, b: 100 }}
+            }});
+        }}
+
+        bar('sq', d.sci_q, 'PRODUTO', 'QTDE', 'Top 10 SCI (Qtd)', '#d62728');
+        bar('pq', d.spr_q, 'PRODUTO', 'QTDE', 'Top 10 SPR (Qtd)', '#1f77b4');
+        bar('sc', d.sci_c, 'PRODUTO', 'VALOR_CUSTO', 'Top 10 SCI (Custo)', '#d62728');
+        bar('pc', d.spr_c, 'PRODUTO', 'VALOR_CUSTO', 'Top 10 SPR (Custo)', '#1f77b4');
+    </script>
+</body>
+</html>
+    """
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5003)
+
+
